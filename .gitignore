@@ -28,6 +28,9 @@ inputs/*.tsv
 inputs/*.tab
 inputs/*.csv
 inputs/*.log
+inputs/*.fna
+inputs/*.tar.gz
+inputs/k2_*
 inputs/output*
 outputs/
 report/

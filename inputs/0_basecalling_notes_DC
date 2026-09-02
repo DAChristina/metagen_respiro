@@ -1,0 +1,140 @@
+Update: 2 Sep 2026
+Notes for basecalling and wf-metagenomics analysis
+By: Dewi Christina
+
+1. basecaller & demux
+2. data preparation for wf-metagenomics pipeline
+3. OPTIONAL: omit human genome using minimap2 (GCF_009914755.1_T2T-CHM13v2.0_genomic.fna)
+4. run wf-metagenomics
+
+##########################################################################################
+##########################################################################################
+DC edited script for basecalling
+
+storage=storage folder based on sequencing done per-run/per-batch;
+/srv/nfs_share/<designated project>/<raw_data>/<batch>
+outputs stored in their designated batch folder.
+
+batch test:
+/srv/nfs_share/2026_RESPIRO/raw_data/SCOVEX_SISPA_3_11082026/SCOVEX_SISPA_3_11082026/20260811_1608_X3_FBF96443_9c1bb3a1
+batch 1:
+/srv/nfs_share/2026_RESPIRO/raw_data/
+
+##########################################################################################
+All tools stored in root.
+sudo -i
+source ~/miniconda3/bin/activate
+
+1. basecaller & demux
+navigate to <storage> in terminal first
+dorado basecaller hac pod5/ > basecalling_hac.bam && \
+dorado demux 	--output-dir output_demux_hac \
+		--kit-name SQK-NBD114-24 \
+		--emit-fastq basecalling_hac.bam
+		
+OR use super-accurate (sup) mode instead of hac
+dorado basecaller sup pod5/ > basecalling_sup.bam && \
+dorado demux 	--output-dir output_demux_sup \
+		--kit-name SQK-NBD114-24 \
+		--emit-fastq basecalling_sup.bam
+
+2. DATA PREP for pipeline input (using sup is recommended when no pathogen detected)
+ls /<batch_address>/output_demux_hac > /<R project>/raw_data/demux_batch1.csv
+Open R and generate data preparation script per-batch.
+Prepare folder design for wf_metagenomics input
+Samplesheet for targeted foldered file is stored in <R project>/inputs/wf_metagenomics_foldered_batch<batch>.tsv
+
+DELETE all fastqs not listed in the batch list
+for f in /srv/nfs_share/2026_RESPIRO/raw_data/<batch_address>/output_demux_hac/*.fastq; do 
+	grep -qxF "$f" <R project>/inputs/wf_metagenomics_foldered_batch<batch>.tsv || rm "$f";
+done
+
+##########################################################################################
+##########################################################################################
+3. OPTIONAL: omit human genome using minimap2 (GCF_009914755.1_T2T-CHM13v2.0_genomic.fna)
+sudo -i
+source ~/miniconda3/bin/activate
+conda activate align_tools
+
+I test downloading the human reference genome from NCBI stored in /srv/nfs_share/contaminant_fasta_files:
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna.gz GCF_009914755.1_T2T-CHM13v2.0_human_reference.fna.gz
+gunzip GCF_009914755.1_T2T-CHM13v2.0_human_reference.fna.gz
+
+NAVIGATE to /<batch_address>/output_demux_<mode> first! (whether it is "hac" or "sup")
+for i in /srv/nfs_share/2026_RESPIRO/raw_data/SCOVEX_SISPA_3_11082026/SCOVEX_SISPA_3_11082026/20260811_1608_X3_FBF96443_9c1bb3a1/output_demux_hac/*.fastq; do 
+	out_dir="$(dirname "$i")/exclude_host_hac"
+	mkdir -p "$out_dir"
+	b=$(basename "$i" .fastq)
+	ref="/srv/nfs_share/2026_RESPIRO/inputs/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna"
+	
+	minimap2 -t 30 -ax map-ont "$ref" "$i" | \
+	samtools view -@ 30 -b -f 4 | \
+	samtools sort -@ 30 -o "${out_dir}/${b}_non_host_sorted.bam"
+	samtools fastq -@ 30 "${out_dir}/${b}_non_host_sorted.bam" > "${out_dir}/${b}_non_host_sorted.fastq"
+done
+mv exclude_host_hac ..
+
+mkdir /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq
+cp /srv/nfs_share/2026_RESPIRO/raw_data/SCOVEX_SISPA_3_11082026/SCOVEX_SISPA_3_11082026/20260811_1608_X3_FBF96443_9c1bb3a1/exclude_host_hac/*.fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq
+
+mkdir /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_wf_metagenomics_target
+cp /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq/*.fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_wf_metagenomics_target
+
+Notes:
+In comparison with wf-metagenomics pipeline, I delete "-m 50 --secondary=no"
+I use "-ax map-ont" to make it more thorough (not fastened host removal like previously implemented in the pipeline)
+I streamline minimap2 to avoid intermediate SAM files
+I move /exclude_host_hac/ up one level out of /output_demux_hac/
+I copy all of the fastq data to /raw_data/0_compiled_fastq
+/raw_data/0_compiled_fastq filled with ALL fastq data after host reduction
+I copy them all to /raw_data/0_compiled_fastq_wf_metagenomics_target to generate 1 folder per sample setting
+
+
+NAVIGATE to/raw_data/0_compiled_fastq_wf_metagenomics_target first! (whether it is "hac" or "sup")
+for i in /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_wf_metagenomics_target/*.fastq; do
+	target_dir="/srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_wf_metagenomics_target"
+	[ -e "$i" ] || continue
+	filename=$(basename "$i")
+	foldername="${filename%.fastq}"
+	
+	mkdir -p "$target_dir/$foldername"
+	mv "$i" "$target_dir/$foldername/"
+done
+
+##########################################################################################
+##########################################################################################
+DELETING host/human genome is not required due to low to zero viral detection
+
+Compile all fastq to /raw_data/0_compiled_fastq_with_host
+mkdir /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host
+cp /srv/nfs_share/2026_RESPIRO/raw_data/SCOVEX_SISPA_3_11082026/SCOVEX_SISPA_3_11082026/20260811_1608_X3_FBF96443_9c1bb3a1/output_demux_hac/*.fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host
+
+mkdir /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target
+cp /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host/*.fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target
+
+NAVIGATE to/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target first! (whether it is "hac" or "sup")
+for i in /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target/*.fastq; do
+	target_dir="/srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target"
+	[ -e "$i" ] || continue
+	filename=$(basename "$i")
+	foldername="${filename%.fastq}"
+	
+	mkdir -p "$target_dir/$foldername"
+	mv "$i" "$target_dir/$foldername/"
+done
+
+4. Run wf-metagenomics
+conda activate nextflow
+cd /srv/nfs_share/oucru_tools/wf-metagenomics/
+nextflow run epi2me-labs/wf-metagenomics \
+	--fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target \
+	--out_dir /srv/nfs_share/2026_RESPIRO/inputs/output_wfmetagenomics_with_host_k2_db_standard8 \
+	--database_set Standard-8 \
+	--amr \
+	--threads 30
+	
+nextflow run epi2me-labs/wf-metagenomics \
+	--fastq /srv/nfs_share/2026_RESPIRO/raw_data/0_compiled_fastq_with_host_wf_metagenomics_target \
+	--out_dir /srv/nfs_share/2026_RESPIRO/inputs/output_wfmetagenomics_with_host_k2_db_viral \
+	--database /srv/nfs_share/2026_RESPIRO/inputs/k2_viral_20260626.tar.gz \
+	--threads 30
