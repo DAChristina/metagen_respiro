@@ -27,6 +27,12 @@ combine_assay_sheets <- function(file, sheet) {
   return(data)
 }
 
+search_taxon <- function(df, pattern) {
+  df %>% 
+    dplyr::filter(stringr::str_detect(k2_name,
+                                      regex(pattern, ignore_case = TRUE)))
+}
+
 prepare_batch <- function(df1, df2, batch, batch_address){
   workLab_logbook <- readxl::read_excel(df1,
                                         skip = 1)
