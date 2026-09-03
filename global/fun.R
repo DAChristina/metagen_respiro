@@ -147,7 +147,7 @@ compile_csvfiles <- function(path = "inputs"){
   )
 }
 
-compile_tabfiles <- function(path, name_file){
+compile_brackenfiles <- function(path, name_file){
   files <- list.files(path,
                       pattern = name_file,
                       full.names = TRUE,
@@ -162,12 +162,43 @@ compile_tabfiles <- function(path, name_file){
                         sep = "\t",
                         header = TRUE) %>% 
                dplyr::mutate(dplyr::across(everything(),
-                                           as.character))
+                                           as.character),
+                             sample_id = basename(f),
+                             sample_id = gsub(".kraken2_bracken.report", "",
+                                              sample_id),
+                             )
            }) %>% 
            dplyr::bind_rows()
   )
 }
 
-
+compile_krakenfiles <- function(path, name_file){
+  files <- list.files(path,
+                      pattern = name_file,
+                      full.names = TRUE,
+                      recursive = TRUE
+  )
+  
+  files <- files[!grepl("compiled", basename(files))]
+  
+  # annoying adjustment
+  return(files %>% 
+           lapply(function(f){
+             read.delim(f,
+                        sep = "\t",
+                        header = FALSE,
+                        col.names = c("pct", "reads_clade", "reads_taxon",
+                                      "rank", "taxid", "name")
+             ) %>% 
+               dplyr::mutate(dplyr::across(everything(),
+                                           as.character),
+                             sample_id = basename(f),
+                             sample_id = gsub(".kraken2.report.txt", "",
+                                              sample_id),
+               )
+           }) %>% 
+           dplyr::bind_rows()
+  )
+}
 
 
